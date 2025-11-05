@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+playwright
+beautifulsoup4
+chromadb
+openai
+tiktoken
+python-dotenv
