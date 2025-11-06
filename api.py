@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-api.py — FastAPI wrapper for website_bot.py (Secure, Env-Safe)
+api.py — FastAPI wrapper for website_bot.py (Secure, Env-Safe, Railway-ready)
 """
 
 import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from website_bot import scrape_website
 from dotenv import load_dotenv
+from website_bot import scrape_website
 
 # Load environment variables
 load_dotenv()
@@ -28,13 +28,12 @@ async def scrape_endpoint(request: ScrapeRequest):
         url = "https://" + url
 
     try:
-        # Call scrape_website function (already returns JSON dict)
         data = scrape_website(url)
         return {"status": "success", "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 async def root():
-    """Health check route"""
-    return {"message": "Website Scraper API is running."}
+    """Health check"""
+    return {"message": "✅ Website Scraper API is running fine!"}
