@@ -1,7 +1,16 @@
+#!/usr/bin/env python3
+"""
+api.py — FastAPI wrapper for async website_bot.py
+"""
+
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from website_bot import scrape_website
-import uvicorn
+from dotenv import load_dotenv
+from website_bot import scrape_website  # async
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI(title="Website Scraper API")
 
@@ -10,15 +19,21 @@ class ScrapeRequest(BaseModel):
 
 @app.post("/scrape")
 async def scrape_endpoint(request: ScrapeRequest):
+    """
+    POST /scrape
+    Body: {"url": "https://example.com"}
+    """
+    url = request.url.strip()
+    if not url.startswith("http"):
+        url = "https://" + url
+
     try:
-        data = await scrape_website(request.url)
-        return {"status":"success","data":data}
+        data = await scrape_website(url)  # ✅ await for async
+        return {"status": "success", "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 async def root():
-    return {"message":"✅ API running"}
-
-if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True, timeout_keep_alive=60)
+    """Health check"""
+    return {"message": "✅ Website Scraper API is running fine!"}
