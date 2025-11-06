@@ -32,7 +32,7 @@ async def scrape_endpoint(request: ScrapeRequest):
         data = scrape_website(url)
         return {"status": "success", "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) 
 
 @app.get("/")
 async def root():

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-website_bot.py — Secure & Env-Safe Version
+website_bot.py
 
 Flow:
 1) Input site URL
@@ -10,22 +10,26 @@ Flow:
 5) Chunk scraped text with chunk_size=180 words and overlap=30
 6) Store chunks in ChromaDB using OpenAI embeddings
 7) Run a RAG extraction: retrieve top chunks and call LLM (gpt-3.5-turbo)
-8) Return clean JSON output
+8) Print clean JSON output
 
-Notes:
-- API key is loaded from .env
-- Hardcoded key removed (safe for Git/GitHub)
+Cost-saving: Only 3 pages are embedded; embedding model = text-embedding-3-small; LLM model = gpt-3.5-turbo
 """
 
 import os, re, time, json, random, urllib.parse
-from typing import List
+from typing import List, Tuple
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 
 # ---------------- Config ----------------
-load_dotenv()  # Load .env automatically
+
+
+load_dotenv(override=True)
+# Now fetch the updated value
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+print(OPENAI_KEY)
+os.environ["OPENAI_API_KEY"] = OPENAI_KEY
+
 USE_HEADLESS = True
 CHUNK_SIZE = 180
 CHUNK_OVERLAP = 30
@@ -35,23 +39,18 @@ try:
     import chromadb
     from chromadb.utils import embedding_functions
     from openai import OpenAI
-except Exception:
-    raise SystemExit("Install required packages: pip install playwright beautifulsoup4 chromadb openai tiktoken python-dotenv")
+except Exception as e:
+    raise SystemExit("Install required packages: pip install playwright beautifulsoup4 chromadb openai tiktoken")
 
-# Initialize clients
 chroma_client = chromadb.Client()
 openai_client = OpenAI(api_key=OPENAI_KEY)
-openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=OPENAI_KEY,
-    model_name="text-embedding-3-small"
-)
+openai_ef = embedding_functions.OpenAIEmbeddingFunction(api_key=OPENAI_KEY, model_name="text-embedding-3-small")
 
 # ---------------- Helper functions ----------------
-def clean_text(t: str) -> str:
+def clean_text(t):
     return re.sub(r"\s+", " ", t).strip()
 
 def fetch_page(url: str, headless: bool = USE_HEADLESS) -> str:
-    """Fetch page content using Playwright"""
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         context = browser.new_context(viewport={"width":1280,"height":800})
@@ -65,8 +64,7 @@ def fetch_page(url: str, headless: bool = USE_HEADLESS) -> str:
         page.close(); context.close(); browser.close()
     return html
 
-def extract_links(base_url: str, html_text: str) -> List[str]:
-    """Extract internal links from a page"""
+def extract_links(base_url, html_text) -> List[str]:
     soup = BeautifulSoup(html_text, "html.parser")
     links = set()
     for a in soup.find_all("a", href=True):
@@ -78,8 +76,7 @@ def extract_links(base_url: str, html_text: str) -> List[str]:
             links.add(full_url.rstrip("/"))
     return list(links)
 
-def crawl_site(base_url: str, max_pages: int = 100) -> List[str]:
-    """Crawl site to get all internal URLs (depth-limited)"""
+def crawl_site(base_url, max_pages=100):
     visited, queue = set(), [base_url.rstrip("/")]
     site_structure = []
     while queue and len(visited) < max_pages:
@@ -96,15 +93,13 @@ def crawl_site(base_url: str, max_pages: int = 100) -> List[str]:
         visited.add(url)
     return site_structure
 
-def select_main_pages(urls: List[str]) -> List[str]:
-    """Auto-select Home, About, Contact pages"""
-    home = urls[0] if urls else ""
+def select_main_pages(urls: List[str]):
+    home = next((u for u in urls if u.rstrip('/')==urls[0].rstrip('/')), urls[0])
     about = next((u for u in urls if "about" in u.lower()), "")
     contact = next((u for u in urls if "contact" in u.lower()), "")
     return list(filter(None, [home, about, contact]))
 
-def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    """Split text into chunks"""
+def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP) -> List[str]:
     words = text.split()
     chunks = []
     i = 0
@@ -114,36 +109,29 @@ def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) 
         i += size - overlap
     return chunks
 
-# ---------------- Fallback extraction ----------------
-def extract_email(text: str) -> str:
+def extract_email(text):
     m = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
     return m[0] if m else ""
 
-def extract_phone(text: str) -> str:
+def extract_phone(text):
     m = re.findall(r"(\+\d{1,3}[\s\-]?\(?\d{1,4}\)?[\s\-]?\d{2,4}[\s\-]?\d{2,4})", text)
-    return m[0] if m else ""
+    if m: return m[0]
+    return ""
 
-def extract_address(text: str) -> str:
+def extract_address(text):
     lines = text.splitlines()
     for line in lines:
         if any(ch.isdigit() for ch in line) and len(line.split())>3:
             return line.strip()
     return ""
 
-# ---------------- RAG extraction ----------------
-def rag_extract(chunks: List[str], url: str) -> dict:
-    coll = chroma_client.get_or_create_collection(
-        "three_page_rag_collection",
-        embedding_function=openai_ef
-    )
-    for i, ch in enumerate(chunks):
-        coll.add(documents=[ch], metadatas=[{"url": url, "chunk": i}], ids=[f"{url}_chunk_{i}"])
-
-    query = ("Extract Business Name, About Us, Main Services, Email, Phone, Address, "
-             "Facebook, Instagram, LinkedIn, Twitter / X, Description, URL")
+def rag_extract(chunks, url):
+    coll = chroma_client.get_or_create_collection("three_page_rag_collection", embedding_function=openai_ef)
+    for i,ch in enumerate(chunks):
+        coll.add(documents=[ch], metadatas=[{"url":url,"chunk":i}], ids=[f"{url}_chunk_{i}"])
+    query = "Extract Business Name, About Us, Main Services, Email, Phone, Address, Facebook, Instagram, LinkedIn, Twitter / X, Description, URL"
     res = coll.query(query_texts=[query], n_results=3)
     context_text = " ".join(res["documents"][0]) if res and "documents" in res else " ".join(chunks[:3])
-
     prompt = f"""
 You are a data extraction assistant. Extract clean JSON from the following text with fields:
 Business Name, About Us, Main Services (list), Email, Phone, Address, Facebook, Instagram, LinkedIn, Twitter / X, Description, URL.
@@ -164,22 +152,27 @@ Text: {context_text}
         return {"raw_ai": raw}
 
 # ---------------- Main Flow ----------------
-def scrape_website(site_url: str) -> dict:
-    """Main scraping function"""
+if __name__=="__main__":
+    site_url = input("Enter website URL: ").strip()
     if not site_url.startswith("http"):
         site_url = "https://" + site_url
 
     print("🔍 Crawling site structure...")
     all_urls = crawl_site(site_url, max_pages=100)
+    print("\nSite structure URLs found:")
+    for u in all_urls:
+        print(u)
 
     main_pages = select_main_pages(all_urls)
-    print("Selected main pages for deep scraping:", main_pages)
+    print("\nSelected main pages for deep scraping:")
+    for p in main_pages:
+        print(p)
 
     all_text = ""
     for page_url in main_pages:
-        print(f"Scraping page: {page_url}")
+        print(f"\nScraping page: {page_url}")
         html = fetch_page(page_url)
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html,"html.parser")
         [s.extract() for s in soup(["script","style","noscript"])]
         text = clean_text(soup.get_text(" ",strip=True))
         all_text += " " + text
@@ -187,7 +180,7 @@ def scrape_website(site_url: str) -> dict:
     all_text = clean_text(all_text)
     chunks = chunk_text(all_text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
 
-    print("Storing chunks in ChromaDB and running RAG extraction...")
+    print("\nStoring chunks in ChromaDB and running RAG extraction...")
     final_data = rag_extract(chunks, site_url)
 
     # Fallback extractions if LLM fails
@@ -207,10 +200,6 @@ def scrape_website(site_url: str) -> dict:
             "URL": site_url
         }
 
-    return final_data
+    print("\n✅ Final Extracted Data:")
+    print(json.dumps(final_data, indent=2, ensure_ascii=False))
 
-# ---------------- CLI usage ----------------
-if __name__=="__main__":
-    url = input("Enter website URL: ").strip()
-    data = scrape_website(url)
-    print(json.dumps(data, indent=2, ensure_ascii=False))
