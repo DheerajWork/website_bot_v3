@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 api.py — FastAPI wrapper for async website_bot.py
-(Playwright Async compatible)
 """
 
 import os
@@ -10,6 +9,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from website_bot import scrape_website
 
+# Load env
 load_dotenv()
 
 app = FastAPI(title="Website Scraper API")
@@ -25,10 +25,10 @@ async def scrape_endpoint(request: ScrapeRequest):
 
     try:
         data = await scrape_website(url)
-        return {"status": "success", "data": data}
+        return {"status":"success","data":data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scraping failed: {str(e)}")
 
 @app.get("/")
 async def root():
-    return {"message": "✅ Website Scraper API is running fine!"}
+    return {"message":"✅ Website Scraper API is running!"}
