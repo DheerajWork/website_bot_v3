@@ -3,12 +3,11 @@
 api.py — FastAPI wrapper for website_bot.py
 """
 
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from dotenv import load_dotenv
 from website_bot import scrape_website
 
-load_dotenv()
 app = FastAPI(title="Website Scraper API with RAG")
 
 class ScrapeRequest(BaseModel):

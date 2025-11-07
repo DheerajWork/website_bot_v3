@@ -7,25 +7,29 @@ import os, re, time, json, random, urllib.parse
 from typing import List
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
-from dotenv import load_dotenv
 
 # ---------------- Config ----------------
-load_dotenv(override=True)
+# Local development: load .env only if file exists
+if os.path.exists(".env"):
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
 
-# ✅ Safety check for OpenAI API Key
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+# ✅ Safety check for OpenAI API Key (Railway uses env var)
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_KEY:
     raise ValueError(
         "🚨 OPENAI_API_KEY environment variable is not set! "
         "Set it in Railway dashboard or local .env file."
     )
+
 os.environ["OPENAI_API_KEY"] = OPENAI_KEY
 
-USE_HEADLESS = True
+USE_HEADLESS = True  # Railway pe True, local debug me False
 CHUNK_SIZE = 180
 CHUNK_OVERLAP = 30
+MAX_CRAWL_PAGES = 10  # Fast API response
 
-# ChromaDB + OpenAI
+# ---------------- Chroma + OpenAI ----------------
 try:
     import chromadb
     from chromadb.utils import embedding_functions
@@ -46,16 +50,19 @@ def clean_text(t: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 def fetch_page(url: str, headless: bool = USE_HEADLESS) -> str:
+    print(f"[INFO] Fetching page: {url}")
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         context = browser.new_context(viewport={"width":1280,"height":800})
         page = context.new_page()
+        html = ""
         try:
             page.goto(url, timeout=45000)
+            print(f"[INFO] Page loaded: {url}")
             time.sleep(2 + random.random()*2)
             html = page.content()
-        except:
-            html = ""
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch {url}: {e}")
         page.close(); context.close(); browser.close()
     return html
 
@@ -71,13 +78,14 @@ def extract_links(base_url, html_text) -> List[str]:
             links.add(full_url.rstrip("/"))
     return list(links)
 
-def crawl_site(base_url, max_pages=100):
+def crawl_site(base_url, max_pages=MAX_CRAWL_PAGES):
     visited, queue = set(), [base_url.rstrip("/")]
     site_structure = []
     while queue and len(visited) < max_pages:
         url = queue.pop(0)
         if url in visited:
             continue
+        print(f"[CRAWL] Visiting ({len(visited)+1}/{max_pages}): {url}")
         html = fetch_page(url)
         site_structure.append(url)
         links = extract_links(base_url, html)
@@ -88,7 +96,7 @@ def crawl_site(base_url, max_pages=100):
     return site_structure
 
 def select_main_pages(urls: List[str]):
-    home = next((u for u in urls if u.rstrip('/')==urls[0].rstrip('/')), urls[0])
+    home = urls[0] if urls else ""
     about = next((u for u in urls if "about" in u.lower()), "")
     contact = next((u for u in urls if "contact" in u.lower()), "")
     return list(filter(None, [home, about, contact]))
@@ -109,8 +117,7 @@ def extract_email(text):
 
 def extract_phone(text):
     m = re.findall(r"(\+\d{1,3}[\s\-]?\(?\d{1,4}\)?[\s\-]?\d{2,4}[\s\-]?\d{2,4})", text)
-    if m: return m[0]
-    return ""
+    return m[0] if m else ""
 
 def extract_address(text):
     lines = text.splitlines()
@@ -120,6 +127,7 @@ def extract_address(text):
     return ""
 
 def rag_extract(chunks, url):
+    print(f"[INFO] Running RAG extraction for {url}")
     coll = chroma_client.get_or_create_collection(
         "three_page_rag_collection", embedding_function=openai_ef
     )
@@ -145,6 +153,7 @@ Text: {context_text}
     try:
         return json.loads(raw)
     except:
+        print(f"[WARN] LLM JSON parsing failed, returning raw AI output")
         return {"raw_ai": raw}
 
 # ---------------- Main Scraping Function ----------------
@@ -152,8 +161,11 @@ def scrape_website(site_url: str) -> dict:
     if not site_url.startswith("http"):
         site_url = "https://" + site_url
 
-    all_urls = crawl_site(site_url, max_pages=100)
+    print(f"[INFO] Starting crawl for: {site_url}")
+    all_urls = crawl_site(site_url, max_pages=MAX_CRAWL_PAGES)
+    print(f"[INFO] Crawled URLs: {all_urls}")
     main_pages = select_main_pages(all_urls)
+    print(f"[INFO] Selected main pages: {main_pages}")
 
     all_text = ""
     for page_url in main_pages:
@@ -165,10 +177,10 @@ def scrape_website(site_url: str) -> dict:
 
     all_text = clean_text(all_text)
     chunks = chunk_text(all_text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+    print(f"[INFO] Total chunks created: {len(chunks)}")
 
     final_data = rag_extract(chunks, site_url)
 
-    # fallback if LLM fails
     if not final_data:
         final_data = {
             "Business Name":"",
