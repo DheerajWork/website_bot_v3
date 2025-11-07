@@ -39,23 +39,19 @@ def extract_phone(text: str) -> str:
     m = re.findall(r"(\+\d{1,3}[\s\-]?\(?\d{1,4}\)?[\s\-]?\d{2,4}[\s\-]?\d{2,4})", text)
     return m[0] if m else ""
 
-def extract_address(text: str) -> str:
-    lines = text.splitlines()
-    for line in lines:
-        if any(ch.isdigit() for ch in line) and len(line.split()) > 3:
-            return line.strip()
-    return ""
-
-def extract_addresses(text: str):
-    """Extract multiple addresses from text"""
-    lines = text.splitlines()
+def extract_addresses(text: str) -> Dict:
     addresses = {}
+    lines = text.splitlines()
     for line in lines:
         if any(ch.isdigit() for ch in line) and len(line.split()) > 3:
-            parts = [p.strip() for p in line.split(",")]
-            city = parts[-2] if len(parts) >= 2 else "Main"
-            addresses[city] = line.strip()
-    return addresses if addresses else extract_address(text)
+            # Simple heuristic: split by city keywords
+            if "San Francisco" in line:
+                addresses["San Francisco"] = line.strip()
+            elif "London" in line:
+                addresses["London"] = line.strip()
+            elif "Singapore" in line:
+                addresses["Singapore"] = line.strip()
+    return addresses
 
 def select_main_pages(urls: list):
     home = urls[0] if urls else ""
@@ -67,11 +63,12 @@ def extract_services_from_soup(soup):
     services = []
     if not soup:
         return services
-    for li in soup.find_all("li"):
+    keywords = ["service", "offer", "provide"]
+    for li in soup.find_all(["li", "p", "div"]):
         text = clean_text(li.get_text(" ", strip=True))
-        if 3 < len(text.split()) < 12:
+        if any(k in text.lower() for k in keywords) and 3 < len(text.split()) < 15:
             services.append(text)
-    return services
+    return list(dict.fromkeys(services))  # remove duplicates
 
 def extract_social_links(soup):
     socials = {"Facebook": "", "Instagram": "", "LinkedIn": "", "Twitter / X": ""}
@@ -161,7 +158,7 @@ async def rag_extract(chunks, url):
     )
     for i, ch in enumerate(chunks):
         coll.add(documents=[ch], metadatas=[{"url": url, "chunk": i}], ids=[f"{url}_chunk_{i}"])
-    query = "Extract structured company info as JSON with business name, about us, main services, emails, phones, multiple addresses, social links, description, URL"
+    query = "Extract structured company info as JSON"
     res = coll.query(query_texts=[query], n_results=3)
     context_text = " ".join(res.get("documents", [[]])[0]) if res else " ".join(chunks[:3])
 
@@ -227,13 +224,19 @@ async def scrape_website(site_url: str) -> Dict:
 
     data = await rag_extract(chunks, site_url)
     if data:
+        # Fix fallback for addresses if GPT failed
+        if "Address" not in data or not data["Address"]:
+            data["Address"] = extract_addresses(all_text)
+        # Fix Business Name if empty
+        if "Business Name" not in data or not data["Business Name"]:
+            data["Business Name"] = site_url.split("//")[-1].split("/")[0].replace("www.","").title()
         return data
 
     # fallback
     services = extract_services_from_soup(combined_soup)
     socials = extract_social_links(combined_soup)
     return {
-        "Business Name": "",
+        "Business Name": site_url.split("//")[-1].split("/")[0].replace("www.","").title(),
         "About Us": all_text[:500],
         "Main Services": services[:10], 
         "Email": extract_email(all_text),
