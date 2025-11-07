@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-website_bot.py — Core website scraper module (Async)
+website_bot.py — Core website scraper module (Async) with GPT + RAG for structured extraction
 """
 
 import os, re, json, random, urllib.parse, asyncio
@@ -15,7 +15,7 @@ USE_HEADLESS = True
 CHUNK_SIZE = 180
 CHUNK_OVERLAP = 30
 MAX_PAGES = 20
-USE_RAG = True  # Use GPT + RAG for structured extraction
+USE_RAG = True  # GPT + RAG extraction
 
 # ---------------- Helper functions ----------------
 def clean_text(t: str) -> str:
@@ -39,35 +39,6 @@ def extract_phone(text: str) -> str:
     m = re.findall(r"(\+\d{1,3}[\s\-]?\(?\d{1,4}\)?[\s\-]?\d{2,4}[\s\-]?\d{2,4})", text)
     return m[0] if m else ""
 
-def extract_address(text: str) -> Dict:
-    # Try to extract multiple addresses
-    addresses = {}
-    lines = text.splitlines()
-    for line in lines:
-        line = line.strip()
-        if any(ch.isdigit() for ch in line) and len(line.split()) > 3:
-            # Try to guess city
-            city_match = re.search(r'([A-Z][a-z]+(?: [A-Z][a-z]+)*)', line)
-            city = city_match.group(0) if city_match else "Address"
-            addresses[city] = line
-    return addresses if addresses else {}
-
-def select_main_pages(urls: list):
-    home = urls[0] if urls else ""
-    about = next((u for u in urls if "about" in u.lower()), "")
-    contact = next((u for u in urls if "contact" in u.lower()), "")
-    return list(filter(None, [home, about, contact]))
-
-def extract_services_from_soup(soup):
-    services = []
-    if not soup:
-        return services
-    for li in soup.find_all("li"):
-        text = clean_text(li.get_text(" ", strip=True))
-        if 2 < len(text.split()) < 12:
-            services.append(text)
-    return services
-
 def extract_social_links(soup):
     socials = {"Facebook": "", "Instagram": "", "LinkedIn": "", "Twitter / X": ""}
     if not soup:
@@ -83,6 +54,22 @@ def extract_social_links(soup):
         elif "twitter.com" in href or "x.com" in href:
             socials["Twitter / X"] = href
     return socials
+
+def extract_services_from_soup(soup):
+    services = []
+    if not soup:
+        return services
+    for li in soup.find_all("li"):
+        text = clean_text(li.get_text(" ", strip=True))
+        if 2 < len(text.split()) < 12:
+            services.append(text)
+    return services
+
+def select_main_pages(urls: list):
+    home = urls[0] if urls else ""
+    about = next((u for u in urls if "about" in u.lower()), "")
+    contact = next((u for u in urls if "contact" in u.lower()), "")
+    return list(filter(None, [home, about, contact]))
 
 # ---------------- Async Playwright ----------------
 from playwright.async_api import async_playwright
@@ -130,7 +117,7 @@ async def crawl_site(base_url: str, max_pages=MAX_PAGES) -> list:
         visited.add(url)
     return site_structure
 
-# ---------------- RAG / GPT ----------------
+# ---------------- GPT + RAG ----------------
 try:
     import chromadb
     from chromadb.utils import embedding_functions
@@ -152,31 +139,20 @@ async def rag_extract(chunks, url):
     if not openai_client or not openai_ef:
         return None
     coll = chroma_client.get_or_create_collection(
-        "company_rag_collection", embedding_function=openai_ef
+        "rag_company_extraction", embedding_function=openai_ef
     )
     for i, ch in enumerate(chunks):
         coll.add(documents=[ch], metadatas=[{"url": url, "chunk": i}], ids=[f"{url}_chunk_{i}"])
-    query = "Extract structured company info as JSON"
+    query = "Extract all company details as structured JSON"
     res = coll.query(query_texts=[query], n_results=3)
     context_text = " ".join(res.get("documents", [[]])[0]) if res else " ".join(chunks[:3])
 
     prompt = f"""
-You are a professional data extraction assistant. 
-Extract all company details from the following text and return STRICT JSON ONLY:
-
-Keys: 
-- Business Name
-- About Us
-- Main Services (list)
-- Email
-- Phone
-- Address (multiple locations if any)
-- Facebook
-- Instagram
-- LinkedIn
-- Twitter / X
-- Description
-- URL
+You are a professional data extraction assistant.
+Extract complete company info from the following text.
+Return STRICT JSON ONLY, with keys:
+Business Name, About Us, Main Services (list), Email, Phone, Address (JSON if multiple locations),
+Facebook, Instagram, LinkedIn, Twitter / X, Description, URL.
 
 Text: {context_text}
 URL: {url}
@@ -206,7 +182,6 @@ async def scrape_website(site_url: str) -> Dict:
 
     all_text = ""
     combined_soup = None
-    business_name = ""
     for page_url in main_pages:
         html = await fetch_page(page_url)
         if not html:
@@ -217,34 +192,24 @@ async def scrape_website(site_url: str) -> Dict:
         main_block = soup.find("main") or soup.find("section") or soup.find("div", {"id":"content"}) or soup
         all_text += clean_text(main_block.get_text(" ", strip=True))
         combined_soup = main_block
-        # Attempt business name from <title> or <h1>
-        if not business_name:
-            title_tag = soup.find("title")
-            h1_tag = soup.find("h1")
-            if title_tag and title_tag.text.strip():
-                business_name = clean_text(title_tag.text.strip())
-            elif h1_tag and h1_tag.text.strip():
-                business_name = clean_text(h1_tag.text.strip())
 
     all_text = clean_text(all_text)
     chunks = chunk_text(all_text)
 
     data = await rag_extract(chunks, site_url)
     if data:
-        if not data.get("Business Name") and business_name:
-            data["Business Name"] = business_name
         return data
 
-    # fallback if RAG/GPT fails
+    # fallback if RAG fails
     services = extract_services_from_soup(combined_soup)
     socials = extract_social_links(combined_soup)
     return {
-        "Business Name": business_name,
+        "Business Name": "",
         "About Us": all_text[:500],
-        "Main Services": services[:10], 
+        "Main Services": services[:10],
         "Email": extract_email(all_text),
         "Phone": extract_phone(all_text),
-        "Address": extract_address(all_text),
+        "Address": extract_addresses(all_text),
         "Facebook": socials.get("Facebook",""),
         "Instagram": socials.get("Instagram",""),
         "LinkedIn": socials.get("LinkedIn",""),
