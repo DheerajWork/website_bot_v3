@@ -1,27 +1,19 @@
-#!/usr/bin/env python3
-"""
-api.py — FastAPI wrapper for website_bot.py
-"""
-
-import os
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from website_bot import scrape_website
 
-app = FastAPI(title="Website Scraper API with RAG")
-
-class ScrapeRequest(BaseModel):
-    url: str
-
-@app.post("/scrape")
-def scrape_endpoint(request: ScrapeRequest):
-    url = request.url.strip()
-    try:
-        data = scrape_website(url)
-        return {"status": "success", "data": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+app = FastAPI(title="Website Data Scraper API")
 
 @app.get("/")
-def root():
-    return {"message": "✅ Website Scraper API is running fine!"}
+def home():
+    return {"message": "✅ Website Scraper API is running successfully."}
+
+@app.post("/scrape")
+def scrape(data: dict):
+    url = data.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing 'url' field in request body")
+    try:
+        result = scrape_website(url)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
