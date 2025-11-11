@@ -4,3 +4,4 @@ beautifulsoup4
 playwright
 openai
 python-dotenv
+chromadb
