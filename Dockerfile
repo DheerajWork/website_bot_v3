@@ -24,7 +24,8 @@ RUN playwright install --with-deps chromium
 # ✅ Copy source code
 COPY . .
 
-EXPOSE 8000
+# ✅ Expose Railway port (always use env variable)
+EXPOSE ${PORT}
 
-# ✅ Launch FastAPI (optimized for Railway)
-CMD ["sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 45"]
+# ✅ Launch FastAPI with correct port for Railway
+CMD ["sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT}"]
