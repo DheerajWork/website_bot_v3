@@ -1,13 +1,11 @@
-# Use Python 3.11 slim image
+# ✅ Base image
 FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-
-# ✅ Pass environment variable into container
 ENV OPENAI_API_KEY=${OPENAI_API_KEY}
 
-# Install system dependencies (for Playwright)
+# ✅ Install dependencies
 RUN apt-get update && apt-get install -y \
     wget curl unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
     libxkbcommon0 libxcomposite1 libxrandr2 libxdamage1 libgbm-dev \
@@ -16,17 +14,17 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install Python dependencies
+# ✅ Copy and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers
+# ✅ Install Playwright Chromium (headless)
 RUN playwright install --with-deps chromium
 
-# Copy project files
+# ✅ Copy source code
 COPY . .
 
 EXPOSE 8000
 
-# ✅ Start the FastAPI app
-CMD ["sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# ✅ Launch FastAPI (optimized for Railway)
+CMD ["sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 45"]
