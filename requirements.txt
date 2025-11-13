@@ -1,5 +1,8 @@
 fastapi
 uvicorn
-beautifulsoup4
 playwright
+beautifulsoup4
+chromadb
+openai
+tiktoken
 python-dotenv
